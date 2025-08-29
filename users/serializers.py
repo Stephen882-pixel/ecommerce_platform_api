@@ -36,3 +36,9 @@ class UserSerializer(serializers.ModelSerializer):
                  'full_name', 'phone_number', 'date_of_birth', 'is_verified',
                  'date_joined', 'last_login')
         read_only_fields = ('id', 'username', 'is_verified', 'date_joined', 'last_login')
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields =  ('id', 'first_name', 'last_name', 'phone_number', 'date_of_birth')
+
