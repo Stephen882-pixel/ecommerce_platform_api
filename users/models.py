@@ -65,7 +65,7 @@ class Address(models.Model):
         return f"{self.user.email} - {self.address_type} - {self.city}"
 
     def save(self, *args, **kwargs):
-        if self.is_default:
+        if self.is_default:  
             Address.objects.filter(
                 user=self.user,
                 address_type=self.address_type,
