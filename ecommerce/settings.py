@@ -243,4 +243,5 @@ SPECTACULAR_SETTINGS = {
     'SCHEMA_PATH_PREFIX': '/api/v1/',
 }
 
+AUTH_USER_MODEL = 'users.User'
 
