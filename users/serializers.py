@@ -42,3 +42,24 @@ class UserProfileSerializer(serializers.ModelSerializer):
         model = User
         fields =  ('id', 'first_name', 'last_name', 'phone_number', 'date_of_birth')
 
+class AddressSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Address
+        fields = '__all__'
+        read_only_fields = ('id', 'user', 'created_at', 'updated_at')
+
+        def validate(self, attrs):
+            user = self.context['request'].user
+            address_type = attrs.get('address_type')
+            is_default = attrs.get('is_default', False)
+
+            if is_default and self.instance is None:
+                existing_default = Address.objects.filter(
+                    user=user,
+                    address_type=address_type,
+                    is_default=True
+                ).exists()
+                if existing_default:
+                    attrs['is_default'] = False
+
+            return attrs
