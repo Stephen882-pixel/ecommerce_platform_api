@@ -33,3 +33,5 @@ class AddressAdmin(admin.ModelAdmin):
     search_fields = ('user__email', 'user__first_name', 'user__last_name', 'city', 'country')
     ordering = ('-created_at',)
 
+
+

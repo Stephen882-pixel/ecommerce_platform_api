@@ -21,7 +21,7 @@ class User(AbstractUser):
     REQUIRED_FIELDS = ['username','first_name','last_name']
 
     class Meta:
-        db_table = 'users',
+        db_table = ("users")
         verbose_name = 'User'
         verbose_name_plural = 'Users'
 
@@ -56,7 +56,7 @@ class Address(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'user_addresses'
+        db_table = ("user_addresses")
         verbose_name = 'Address'
         verbose_name_plural = 'Addresses'
         unique_together = ['user', 'address_type', 'is_default']
@@ -65,7 +65,7 @@ class Address(models.Model):
         return f"{self.user.email} - {self.address_type} - {self.city}"
 
     def save(self, *args, **kwargs):
-        if self.is_default:  
+        if self.is_default:
             Address.objects.filter(
                 user=self.user,
                 address_type=self.address_type,

@@ -12,7 +12,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 from email.policy import default
 from pathlib import Path
 import os
-from decouple import Config
+from decouple import config
 from datetime import timedelta
 
 from django.conf.global_settings import INSTALLED_APPS
@@ -25,10 +25,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = Config('SECRET_KEY')
+SECRET_KEY = config('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = Config('DEBUG',default=False,cast=bool)
+DEBUG = config('DEBUG', default=False,cast=bool)
 
 ALLOWED_HOSTS = ['localhost','127.0.0.1','0.0.0.0']
 
@@ -152,7 +152,7 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-STATICFILES_DIRS = [BASE_DIR / 'static']
+#STATICFILES_DIRS = [BASE_DIR / 'static']
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
@@ -180,13 +180,13 @@ REST_FRAMEWORK = {
 
 # JWT Settings
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=Config('JWT_ACCESS_TOKEN_LIFETIME', default=60, cast=int)),
-    'REFRESH_TOKEN_LIFETIME': timedelta(minutes=Config('JWT_REFRESH_TOKEN_LIFETIME', default=1440, cast=int)),
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=config('JWT_ACCESS_TOKEN_LIFETIME', default=60, cast=int)),
+    'REFRESH_TOKEN_LIFETIME': timedelta(minutes=config('JWT_REFRESH_TOKEN_LIFETIME', default=1440, cast=int)),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'UPDATE_LAST_LOGIN': True,
-    'ALGORITHM': Config('JWT_ALGORITHM', default='HS256'),
-    'SIGNING_KEY': Config('JWT_SECRET_KEY', default=SECRET_KEY),
+    'ALGORITHM': config('JWT_ALGORITHM', default='HS256'),
+    'SIGNING_KEY': config('JWT_SECRET_KEY', default=SECRET_KEY),
     'VERIFYING_KEY': None,
     'AUDIENCE': None,
     'ISSUER': None,
@@ -216,13 +216,13 @@ DJOSER = {
 }
 
 # Email Configuration
-EMAIL_BACKEND = Config('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
-EMAIL_HOST = Config('EMAIL_HOST', default='localhost')
-EMAIL_PORT = Config('EMAIL_PORT', default=587, cast=int)
-EMAIL_USE_TLS = Config('EMAIL_USE_TLS', default=True, cast=bool)
-EMAIL_HOST_USER = Config('EMAIL_HOST_USER', default='')
-EMAIL_HOST_PASSWORD = Config('EMAIL_HOST_PASSWORD', default='')
-DEFAULT_FROM_EMAIL = Config('DEFAULT_FROM_EMAIL', default='noreply@ecommerce.com')
+EMAIL_BACKEND = config('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
+EMAIL_HOST = config('EMAIL_HOST', default='localhost')
+EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
+EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
+EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
+DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@ecommerce.com')
 
 # CORS Settings
 CORS_ALLOWED_ORIGINS = [
