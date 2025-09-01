@@ -9,7 +9,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from rest_framework.serializers import ValidationError
 import logging
-from .models import UserProfile
+from .models import UserProfile,Address
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.contrib.auth.models import User
@@ -25,8 +25,7 @@ class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField(max_length=50)
     username = serializers.CharField(max_length=50)
     password = serializers.CharField(write_only=True)
-    # registration_no = serializers.CharField(max_length=50)
-    course = serializers.CharField(max_length=50)
+    phone_number = serializers.CharField(max_length=25)
 
     def validate_username(self, value):
         if not re.match(r'^[\w.@+-]+$', value):
@@ -42,11 +41,6 @@ class RegisterSerializer(serializers.Serializer):
             raise serializers.ValidationError("Password must contain at least one number")
         return value
 
-    def validate_course(self, value):
-        if value.isspace():
-            raise serializers.ValidationError("Please provide your course")
-
-        return value
 
     def validate(self, data):
         username = data['username'].lower()
@@ -58,7 +52,7 @@ class RegisterSerializer(serializers.Serializer):
         return data
 
     def create(self, validated_data):
-        course = validated_data.pop('course')
+        phone_number = validated_data.pop('phone_number')
         with transaction.atomic():
             # Create User with 'is_active=False'
             user = User.objects.create_user(
@@ -71,7 +65,7 @@ class RegisterSerializer(serializers.Serializer):
             )
             UserProfile.objects.create(
                 user=user,
-                course=course
+                phone_number=phone_number
             )
         return user
 
@@ -178,3 +172,27 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = '__all__'
+
+
+class AddressSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Address
+        fields = [
+            'id','address_type','country','county','constituency','town',
+            'estate','street','landmark','postal_code','created_at','updated_at'
+        ]
+
+        read_only_fields = ['id','created_at','updated_at']
+
+
+    def validate_address_type(self,value):
+        if value not in ['billing','shipping','both']:
+            raise serializers.ValidationError("Invalid address type")
+        return value
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        validated_data['user'] = request.user
+        return super().create(validated_data)
+
+

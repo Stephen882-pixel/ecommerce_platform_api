@@ -31,52 +31,19 @@ class PasswordResetRequest(models.Model):
 
 class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
-    course = models.CharField(max_length=50)
-    registration_no = models.CharField(max_length=50, blank=True, null=True)
-    bio = models.CharField(max_length=255, null=True, blank=True)
-    tech_stacks = models.TextField(blank=True, null=True)  # Will store as JSON string
-    social_media = models.TextField(blank=True, null=True)
-    photo = models.ImageField(upload_to='profile_photos/', blank=True, null=True)
-
-    graduation_year = models.PositiveIntegerField(blank=True, null=True)
-    projects = models.TextField(blank=True, null=True)
-    skills = models.TextField(blank=True, null=True)
-    year_of_study = models.PositiveIntegerField(blank=True, null=True)
+    national_id = models.CharField(max_length=20,blank=True,null=True,unique=True)
+    profile_image = models.ImageField(upload_to="profiles/",blank=True,null=True)
+    date_of_birth = models.DateField(blank=True,null=True)
+    gender = models.CharField(max_length=10,blank=True,null=True,choices=[
+        ("male","Male"),
+        ("female","Female"),
+        ("other","Other")
+    ])
+    phone_number = models.CharField(max_length=25, unique=True)
 
     def __str__(self):
         return self.user.username
 
-    def set_tech_stacks(self, tech_stacks_list):
-        """Set tech_stacks from a list of strings"""
-        self.tech_stacks = json.dumps(tech_stacks_list)
-
-    def get_tech_stacks(self):
-        """Get tech_stacks as a list of strings"""
-        return json.loads(self.tech_stacks) if self.tech_stacks else []
-
-    def set_social_media(self, social_media_dict):
-        """Set social_media from a dictionary"""
-        self.social_media = json.dumps(social_media_dict)
-
-    def get_social_media(self):
-        """Get social_media as a dictionary"""
-        return json.loads(self.social_media) if self.social_media else {}
-
-    def set_projects(self, projects_list):
-        """Set projects from a list"""
-        self.projects = json.dumps(projects_list)
-
-    def get_projects(self):
-        """Get projects as a list"""
-        return json.loads(self.projects) if self.projects else []
-
-    def set_skills(self, skills_list):
-        """Set skills from a list"""
-        self.skills = json.dumps(skills_list)
-
-    def get_skills(self):
-        """Get skills as a list"""
-        return json.loads(self.skills) if self.skills else []
 
 
 class OTP(models.Model):
@@ -110,3 +77,35 @@ class PasswordResetSession(models.Model):
 
     def is_valid(self):
         return not self.is_used and timezone.now() <= self.expires_at
+
+
+class Address(models.Model):
+    ADDRESS_TYPES = [
+        ('billing','Billing'),
+        ('shipping','Shipping'),
+        ('both','Both')
+    ]
+    user = models.ForeignKey(User,on_delete=models.CASCADE,related_name='addresses')
+    address_type = models.CharField(max_length=10,choices=ADDRESS_TYPES)
+
+    # Location details
+    country = models.CharField(max_length=100,default="Kenya")
+    county = models.CharField(max_length=100)
+    constituency = models.CharField(max_length=100)
+    town = models.CharField(max_length=100)
+    estate = models.CharField(max_length=100,blank=True,null=True)
+    street = models.CharField(max_length=100,blank=True,null=True)
+    landmark = models.CharField(max_length=255,blank=True,null=True)
+    postal_code = models.CharField(max_length=55,blank=True,null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+    class Meta:
+        verbose_name_plural = "Addresses"
+
+    def __str__(self):
+        return f"{self.town}"
+
+

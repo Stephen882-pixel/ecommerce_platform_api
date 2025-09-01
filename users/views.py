@@ -573,17 +573,12 @@ class UserDataView(APIView):
                 'email': user.email,
                 'first_name': user.first_name,
                 'last_name': user.last_name,
-                'course': user_profile.course,
+                'phone_number': user_profile.phone_number,
                 # Include all the additional fields
-                'registration_no': user_profile.registration_no,
-                'bio': user_profile.bio,
-                'tech_stacks': json.loads(user_profile.tech_stacks) if user_profile.tech_stacks else [],
-                'social_media': json.loads(user_profile.social_media) if user_profile.social_media else {},
-                'photo': request.build_absolute_uri(user_profile.photo.url) if user_profile.photo else None,
-                # 'year_of_study': user_profile.year_of_study,
-                'graduation_year': user_profile.graduation_year,
-                'projects': json.loads(user_profile.projects) if user_profile.projects else [],
-                'skills': json.loads(user_profile.skills) if user_profile.skills else []
+                'national_id':user_profile.national_id,
+                'date_of_birth':user_profile.date_of_birth,
+                'gender':user_profile.gender,
+                'profile_image':request.build_absolute_uri(user_profile.profile_image.url) if user_profile.profile_image else None
             }
 
             return Response({
@@ -673,26 +668,18 @@ class UserProfileUpdateView(APIView):
             if 'email' in request.data:
                 user.email = request.data['email']
             user.save()
-            if 'course' in request.data:
-                user_profile.course = request.data['course']
-            if 'registration_no' in request.data:
-                user_profile.registration_no = request.data['registration_no']
-            if 'bio' in request.data:
-                user_profile.bio = request.data['bio']
-            if 'tech_stacks' in request.data:
-                user_profile.set_tech_stacks(request.data['tech_stacks'])
-            if 'social_media' in request.data:
-                user_profile.set_social_media(request.data['social_media'])
-            if 'photo' in request.FILES:
-                user_profile.photo = request.FILES['photo']
-            if 'year_of_study' in request.data:
-                user_profile.year_of_study = request.data['year_of_study']
-            if 'graduation_year' in request.data:
-                user_profile.graduation_year = request.data['graduation_year']
-            if 'projects' in request.data:
-                user_profile.set_projects(request.data['projects'])
-            if 'skills' in request.data:
-                user_profile.set_skills(request.data['skills'])
+            if 'phone_number' in request.data:
+                user_profile.course = request.data['phone_number']
+            if 'national_id' in request.data:
+                user_profile.national_id = request.data['national_id']
+            if 'phone_number' in request.data:
+                user_profile.phone_number = request.data['phone_number']
+            if 'date_of_birth' in request.data:
+                user_profile.date_of_birth = request.data['date_of_birth']
+            if 'gender' in request.data:
+                user_profile.gender = request.data['gender']
+            if 'profile_image' in request.FILES:
+                user_profile.profile_image = request.FILES['profile_image']
 
             user_profile.save()
             updated_data = {
@@ -702,15 +689,11 @@ class UserProfileUpdateView(APIView):
                 'first_name': user.first_name,
                 'last_name': user.last_name,
                 'course': user_profile.course,
-                'registration_no': user_profile.registration_no,
-                'bio': user_profile.bio,
-                'tech_stacks': user_profile.get_tech_stacks(),
-                'social_media': user_profile.get_social_media(),
-                'photo': request.build_absolute_uri(user_profile.photo.url) if user_profile.photo else None,
-                'year_of_study': user_profile.year_of_study,
-                'graduation_year': user_profile.graduation_year,
-                'projects': user_profile.get_projects(),
-                'skills': user_profile.get_skills()
+                'national_id': user_profile.national_id,
+                'phone_number':user_profile.phone_number,
+                'date_of_birth': user_profile.date_of_birth,
+                'gender': user_profile.gender,
+                'profile_image': request.build_absolute_uri(user_profile.profile_image.url) if user_profile.profile_image else None
             }
 
             return Response({
