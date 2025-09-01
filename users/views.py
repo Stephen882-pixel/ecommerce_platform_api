@@ -14,16 +14,17 @@ from django.db.models import Prefetch
 from django.contrib.auth import get_user_model
 from rest_framework.decorators import api_view
 from rest_framework.permissions import IsAuthenticated
-from .serializers import UserSerializer
+from .serializers import UserSerializer,AddressSerializer
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.contrib.auth.models import User
-from .models import OTP
+from .models import OTP,Address
 from .serializers import RequestPasswordResetSerializer, ResetPasswordSerializer
 from .utils import generate_otp, send_otp_email
 from django.utils import timezone
 import traceback
+from rest_framework import generics,permissions,status
 
 User = get_user_model()
 
@@ -916,4 +917,15 @@ class DeleteAccountView(APIView):
         user.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+
+class AddressListCreateView(generics.ListCreateAPIView):
+    serializer_class = AddressSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+
+    def get_queryset(self):
+        return Address.objects.filter(user=self.request.user).order_by('-created_at')
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
 
