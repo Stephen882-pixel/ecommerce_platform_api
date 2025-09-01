@@ -1,4 +1,6 @@
 from tokenize import TokenError
+
+from django.shortcuts import get_object_or_404
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.pagination import PageNumberPagination
@@ -929,3 +931,13 @@ class AddressListCreateView(generics.ListCreateAPIView):
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
+
+class AddressDetailView(generics.RetrieveUpdateDestroyAPIView):
+    def get_queryset(self):
+        return Address.objects.filter(user=self.request.user)
+
+    def get_object(self):
+        queryset = self.get_queryset()
+        address_id = self.kwargs.get('pk')
+        obj = get_object_or_404(queryset, id=address_id)
+        return obj
