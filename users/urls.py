@@ -1,9 +1,9 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (ChangePasswordView, LogoutView, RegisterView,
-                           LoginView, UserDataView,AllUsersView,RequestPasswordResetView,
-                           ResetPasswordView,UserProfileUpdateView,DeleteAccountView,UnifiedOTPVerificationView,
-                    AddressListCreateView,AddressDetailView)
+                    LoginView, UserDataView, AllUsersView, RequestPasswordResetView,
+                    ResetPasswordView, UserProfileUpdateView, DeleteAccountView, UnifiedOTPVerificationView,
+                    AddressListCreateView, AddressDetailView, AddressDeleteView)
 
 urlpatterns = [
     path('register/',RegisterView.as_view(),name='register'),
@@ -20,5 +20,6 @@ urlpatterns = [
     path('verify-otp/', UnifiedOTPVerificationView.as_view(), name='verify-otp'),
 
     path("addresses/",AddressListCreateView.as_view(),name="address-list-create"),
-    path("addresses/<int:pk>/",AddressDetailView.as_view(),name="address-detail")
+    path("addresses/<int:pk>/",AddressDetailView.as_view(),name="address-detail"),
+    path("addresses/<int:pk>/delete/", AddressDeleteView.as_view(), name="address-delete"),
 ]

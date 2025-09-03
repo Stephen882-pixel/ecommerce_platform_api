@@ -568,31 +568,13 @@ class UserDataView(APIView):
     )
     def get(self, request):
         user = request.user
-        try:
-            user_profile = UserProfile.objects.get(user=user)
-            user_data = {
-                'id': user.id,
-                'username': user.username,
-                'email': user.email,
-                'first_name': user.first_name,
-                'last_name': user.last_name,
-                'phone_number': user_profile.phone_number,
-                # Include all the additional fields
-                'national_id':user_profile.national_id,
-                'date_of_birth':user_profile.date_of_birth,
-                'gender':user_profile.gender,
-                'profile_image':request.build_absolute_uri(user_profile.profile_image.url) if user_profile.profile_image else None
-            }
+        serializer = UserSerializer(user, context={'request':request})
 
-            return Response({
-                'message': 'User data retrieved successfully',
-                'status': 'success',
-                'data': user_data
-            }, status=status.HTTP_200_OK)
-        except UserProfile.DoesNotExist:
-            return Response({
-                'error': 'User profile does not exist'
-            }, status=status.HTTP_404_NOT_FOUND)
+        return Response({
+            'message':'User data retrieved successfully',
+            'status':'success',
+            'data':serializer.data
+        },status=status.HTTP_200_OK)
 
 
 class UserProfileUpdateView(APIView):
@@ -664,39 +646,125 @@ class UserProfileUpdateView(APIView):
         user = request.user
         try:
             user_profile = UserProfile.objects.get(user=user)
-            if 'first_name' in request.data:
-                user.first_name = request.data['first_name']
-            if 'last_name' in request.data:
-                user.last_name = request.data['last_name']
-            if 'email' in request.data:
-                user.email = request.data['email']
+
+            # Update User fields
+            user_fields = ['first_name', 'last_name', 'email']
+            for field in user_fields:
+                if field in request.data:
+                    setattr(user, field, request.data[field])
             user.save()
-            if 'phone_number' in request.data:
-                user_profile.course = request.data['phone_number']
-            if 'national_id' in request.data:
-                user_profile.national_id = request.data['national_id']
-            if 'phone_number' in request.data:
-                user_profile.phone_number = request.data['phone_number']
-            if 'date_of_birth' in request.data:
-                user_profile.date_of_birth = request.data['date_of_birth']
-            if 'gender' in request.data:
-                user_profile.gender = request.data['gender']
+
+            # Update UserProfile fields
+            profile_fields = ['phone_number', 'national_id', 'date_of_birth', 'gender']
+            for field in profile_fields:
+                if field in request.data:
+                    setattr(user_profile, field, request.data[field])
+
+            # Handle profile image upload
             if 'profile_image' in request.FILES:
                 user_profile.profile_image = request.FILES['profile_image']
 
             user_profile.save()
+
+            # Handle address updates
+            if 'addresses' in request.data:
+                addresses_data = request.data['addresses']
+
+                # If addresses_data is a list, handle multiple addresses
+                if isinstance(addresses_data, list):
+                    # Option 1: Replace all existing addresses
+                    # Address.objects.filter(user=user).delete()  # Uncomment to replace all
+
+                    for address_data in addresses_data:
+                        address_id = address_data.get('id')
+
+                        if address_id:
+                            # Update existing address
+                            try:
+                                address = Address.objects.get(id=address_id, user=user)
+                                address_fields = ['county', 'country', 'town', 'address_type',
+                                                  'constituency', 'landmark', 'postal_code', 'street']
+                                for field in address_fields:
+                                    if field in address_data:
+                                        setattr(address, field, address_data[field])
+                                address.save()
+                            except Address.DoesNotExist:
+                                continue
+                        else:
+                            # Create new address
+                            Address.objects.create(
+                                user=user,
+                                county=address_data.get('county', ''),
+                                country=address_data.get('country', ''),
+                                town=address_data.get('town', ''),
+                                address_type=address_data.get('address_type', ''),
+                                constituency=address_data.get('constituency', ''),
+                                landmark=address_data.get('landmark', ''),
+                                postal_code=address_data.get('postal_code', ''),
+                                street=address_data.get('street', '')
+                            )
+
+                # If it's a single address object
+                elif isinstance(addresses_data, dict):
+                    address_id = addresses_data.get('id')
+
+                    if address_id:
+                        # Update existing address
+                        try:
+                            address = Address.objects.get(id=address_id, user=user)
+                            address_fields = ['county', 'country', 'town', 'address_type',
+                                              'constituency', 'landmark', 'postal_code', 'street']
+                            for field in address_fields:
+                                if field in addresses_data:
+                                    setattr(address, field, addresses_data[field])
+                            address.save()
+                        except Address.DoesNotExist:
+                            pass
+                    else:
+                        # Create new address
+                        Address.objects.create(
+                            user=user,
+                            county=addresses_data.get('county', ''),
+                            country=addresses_data.get('country', ''),
+                            town=addresses_data.get('town', ''),
+                            address_type=addresses_data.get('address_type', ''),
+                            constituency=addresses_data.get('constituency', ''),
+                            landmark=addresses_data.get('landmark', ''),
+                            postal_code=addresses_data.get('postal_code', ''),
+                            street=addresses_data.get('street', '')
+                        )
+
+            # Get updated addresses
+            user_addresses = Address.objects.filter(user=user)
+            addresses_data = []
+            for address in user_addresses:
+                address_dict = {
+                    'id': address.id,
+                    'county': address.county,
+                    'country': address.country,
+                    'town': address.town,
+                    'address_type': address.address_type,
+                    'constituency': address.constituency,
+                    'landmark': address.landmark,
+                    'postal_code': address.postal_code,
+                    'street': address.street
+                }
+                addresses_data.append(address_dict)
+
+            # Build response data
             updated_data = {
                 'id': user.id,
                 'username': user.username,
                 'email': user.email,
                 'first_name': user.first_name,
                 'last_name': user.last_name,
-                'course': user_profile.course,
+                'phone_number': user_profile.phone_number,
                 'national_id': user_profile.national_id,
-                'phone_number':user_profile.phone_number,
                 'date_of_birth': user_profile.date_of_birth,
                 'gender': user_profile.gender,
-                'profile_image': request.build_absolute_uri(user_profile.profile_image.url) if user_profile.profile_image else None
+                'profile_image': request.build_absolute_uri(
+                    user_profile.profile_image.url) if user_profile.profile_image else None,
+                'user_addresses': addresses_data
             }
 
             return Response({
@@ -704,10 +772,15 @@ class UserProfileUpdateView(APIView):
                 "status": "success",
                 "data": updated_data
             }, status=status.HTTP_200_OK)
+
         except UserProfile.DoesNotExist:
             return Response({
                 "error": "User profile does not exist"
             }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                "error": f"An error occurred: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @swagger_auto_schema(
         operation_description="Partially update the authenticated user's profile (same fields as PUT, but not all required).",
@@ -941,3 +1014,28 @@ class AddressDetailView(generics.RetrieveUpdateDestroyAPIView):
         address_id = self.kwargs.get('pk')
         obj = get_object_or_404(queryset, id=address_id)
         return obj
+
+
+class AddressDeleteView(generics.DestroyAPIView):
+    serializer_class = AddressSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return Address.objects.filter(user=self.request.user)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        address_info = {
+            'id': instance.id,
+            'street': instance.street,
+            'town': instance.town,
+            'address_type': instance.address_type
+        }
+
+        self.perform_destroy(instance)
+
+        return Response({
+            'message': 'Address deleted successfully',
+            'status': 'success',
+            'deleted_address': address_info
+        }, status=status.HTTP_200_OK)

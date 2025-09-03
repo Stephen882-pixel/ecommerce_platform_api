@@ -168,21 +168,11 @@ class ResetPasswordSerializer(serializers.Serializer):
         return value
 
 
-class UserSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = User
-        fields = '__all__'
-
-
 class AddressSerializer(serializers.ModelSerializer):
     class Meta:
         model = Address
-        fields = [
-            'id','address_type','country','county','constituency','town',
-            'estate','street','landmark','postal_code','created_at','updated_at'
-        ]
+        exclude = ['created_at','updated_at','user']
 
-        read_only_fields = ['id','created_at','updated_at']
 
 
     def validate_address_type(self,value):
@@ -196,3 +186,32 @@ class AddressSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
+class UserProfileSerializer(serializers.ModelSerializer):
+    profile_image = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserProfile
+        fields = ['phone_number','national_id','date_of_birth','gender','profile_image']
+
+    def get_profile_image(self,obj):
+        request = self.context.get('request')
+        if obj.profile_image:
+            return request.build.absolute_uri(obj.profile_image.url)
+        return None
+
+class UserSerializer(serializers.ModelSerializer):
+    user_addresses = AddressSerializer(source='addresses', many=True, read_only=True)
+    profile = UserProfileSerializer(source='userprofile', read_only=True)
+
+    class Meta:
+        model = User
+        fields = [
+            'id',
+            'username',
+            'first_name',
+            'last_name',
+            'email',
+            'date_joined',
+            'user_addresses',
+            'profile'
+        ]
