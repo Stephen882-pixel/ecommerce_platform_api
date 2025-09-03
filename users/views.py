@@ -1,36 +1,1041 @@
-from rest_framework import generics,permissions,status
-from rest_framework.decorators import api_view,permission_classes
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from tokenize import TokenError
+
+from django.shortcuts import get_object_or_404
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
+from rest_framework.pagination import PageNumberPagination
+from .models import PasswordResetRequest
+from .serializers import RegisterSerializer, LoginSerializer, ChangePasswordSerializer
+from django.db import IntegrityError
+from .models import UserProfile
+from rest_framework_simplejwt.tokens import RefreshToken
+from datetime import timedelta
+from .Email import send_the_otp_email
+import random
+from django.db.models import Prefetch
 from django.contrib.auth import get_user_model
-from .models import Address
-from .serializers import UserProfileSerializer,AddressSerializer
+from rest_framework.decorators import api_view
+from rest_framework.permissions import IsAuthenticated
+from .serializers import UserSerializer,AddressSerializer
+from rest_framework import status
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from django.contrib.auth.models import User
+from .models import OTP,Address
+from .serializers import RequestPasswordResetSerializer, ResetPasswordSerializer
+from .utils import generate_otp, send_otp_email
+from django.utils import timezone
+import traceback
+from rest_framework import generics,permissions,status
 
 User = get_user_model()
 
-class UserProfileView(generics.RetrieveUpdateAPIView):
-    serializer_class = UserProfileSerializer
+
+class RegisterView(APIView):
+
+    @swagger_auto_schema(
+        tags=["Authentication"],
+        operation_summary="Register a new user account",
+        operation_description="Register a new user and send an OTP to their email for verification.",
+        request_body=RegisterSerializer,
+        responses={
+            status.HTTP_201_CREATED: openapi.Response(
+                description="Account created successfully. OTP sent to email.",
+                examples={
+                    "application/json": {
+                        "message": "Account created successfully. Please check your email for OTP verification code.",
+                        "status": "success",
+                        "user_data": None
+                    }
+                }
+            ),
+            status.HTTP_400_BAD_REQUEST: openapi.Response(
+                description="Validation error or duplicate email/email.",
+                examples={
+                    "application/json": {
+                        "message": "Username already exists. Please choose a different username.",
+                        "status": "failed",
+                        "errors": {"username": "Username already exists"},
+                        "data": None
+                    }
+                }
+            ),
+            status.HTTP_500_INTERNAL_SERVER_ERROR: openapi.Response(
+                description="Unexpected server error",
+                examples={
+                    "application/json": {
+                        "message": "An unexpected error occured...",
+                        "status": "failed",
+                        "data": None
+                    }
+                }
+            ),
+        }
+    )
+    def post(self, request):
+        serializer = RegisterSerializer(data=request.data)
+        if serializer.is_valid():
+            try:
+                user = serializer.save()
+                try:
+                    otp_code = ''.join(random.choices('0123456789', k=6))
+                    otp = OTP.objects.create(
+                        user=user,
+                        otp_code=otp_code,
+                    )
+                    send_the_otp_email(user, otp)
+                except Exception as e:
+                    return Response({
+                        "message": f'Failed to send OTP email: {str(e)}',
+                        "status": "failed",
+                        "data": None
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+                return Response({
+                    "message": "Account created successfully. Please check your email for OTP verification code",
+                    "status": "success",
+                    "user_data": None
+                }, status=status.HTTP_201_CREATED)
+            except IntegrityError as e:
+                if "username" in str(e).lower():
+                    return Response({
+                        "message": "Username already exists. Please choose a different username.",
+                        "status": "failed",
+                        "errors": {"username": "Username already exists"},
+                        "data": None
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                elif "email" in str(e).lower():
+                    return Response({
+                        "message": "Email already exists. Please use a different email or try logging in.",
+                        "status": "failed",
+                        "errors": {"email": "Email already exists"},
+                        "data": None
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                else:
+                    return Response({
+                        "message": f"Database error: {str(e)}",
+                        "status": "failed",
+                        "data": None
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            except Exception as e:
+                return Response({
+                    "message": f"An unexpected error occurred: {str(e)}",
+                    "status": "failed",
+                    "data": None
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        error_details = {}
+        for field, errors in serializer.errors.items():
+            error_details[field] = str(errors[0]) if errors else "Invalid data"
+
+        if "username" in error_details and "already exists" in error_details["username"].lower():
+            message = "Username already exists. Please choose a different username."
+        elif "email" in error_details and "already exists" in error_details["email"].lower():
+            message = "Email already exists. Please use a different email or try logging in."
+        else:
+            message = "There was a problem signing up. Please check the details and try again."
+
+        return Response({
+            "message": message,
+            "status": "failed",
+            "errors": error_details,
+            "data": None
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class UnifiedOTPVerificationView(APIView):
+    permission_classes = []
+    authentication_classes = []
+
+    @swagger_auto_schema(
+        tags=["Authentication"],
+        operation_summary="verify OTP",
+        operation_description="Verify an OTP for registration or password reset",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=["email", "otp_code"],
+            properties={
+                "email": openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_EMAIL,
+                                        description="User's email address"),
+                "otp_code": openapi.Schema(type=openapi.TYPE_STRING,
+                                           description="One-Time Password (OTP) sent to the user's email"),
+            },
+        ),
+        responses={
+            200: openapi.Response(
+                description="OTP verified successfully",
+                examples={
+                    "application/json": {
+                        "message": "Email verified successfully you can now login.",
+                        "status": "success",
+                        "data": None
+                    }
+                }
+            ),
+            400: openapi.Response(
+                description="Bad request (missing/invalid OTP or email)",
+                examples={
+                    "application/json": {
+                        "message": "Invalid OTP",
+                        "status": "error",
+                        "data": None
+                    }
+                }
+            ),
+            500: openapi.Response(
+                description="Internal Server Error",
+                examples={
+                    "application/json": {
+                        "message": "An error occured <errror message>",
+                        "status": "error",
+                        "data": None
+                    }
+                }
+            ),
+        },
+    )
+    def post(self, request):
+        email = request.data.get('email')
+        otp_code = request.data.get('otp_code')
+
+        if not email or not otp_code:
+            return Response({
+                "message": "Email and OTP are required",
+                "status": "error",
+                "data": None
+            }, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user = User.objects.get(email=email)
+            verification_type = 'registration' if not user.is_active else 'password_reset'
+        except User.DoesNotExist:
+            return Response({
+                "message": "User not found",
+                "status": "error",
+                "data": None
+            }, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            otp_obj = OTP.objects.filter(
+                user=user,
+                is_verified=False
+            ).order_by('-created_at').first()
+
+            if not otp_obj:
+                return Response({
+                    'message': 'No OTP found for this account. Please request a new OTP',
+                    'status': 'error',
+                    'data': None
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            if not otp_obj.is_valid():
+                return Response({
+                    'message': 'OTP has expired. Please request a new one',
+                    'status': 'error',
+                    'data': None
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            if otp_code != otp_obj.otp_code:
+                return Response({
+                    'message': 'Invalid OTP',
+                    'status': 'error',
+                    'data': None
+                }, status=status.HTTP_400_BAD_REQUEST)
+            otp_obj.is_verified = True
+            otp_obj.save()
+            if verification_type == 'registration':
+                user.is_active = True
+                user.save()
+                return Response({
+                    "message": "Email verified successfully. You can now login",
+                    "status": 'success',
+                    "data": None
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({
+                    "message": "OTP verified successfully. You can now reset your password",
+                    "status": 'success',
+                    "data": None
+                }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({
+                'message': f'An error occurred: {str(e)}',
+                'status': 'error',
+                'data': None
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class LoginView(APIView):
+    permission_classes = []
+    authentication_classes = []
+
+    @swagger_auto_schema(
+        tags=["Authentication"],
+        operation_summary="login as user",
+        operation_description="Authenticate a user and return JWT access and refresh tokens.",
+        request_body=LoginSerializer,
+        responses={
+            status.HTTP_200_OK: openapi.Response(
+                description="Login Successfull",
+                examples={
+                    "application/json": {
+                        "message": "Login successfully",
+                        "status": "success",
+                        "data": {
+                            "refresh": "eyJ0eXAiOiJKV1QiLCJh...",
+                            "access": "eyJ0eXAiOiJKV1QiLCJh..."
+                        }
+                    }
+                }
+            ),
+            status.HTTP_403_FORBIDDEN: openapi.Response(
+                description="Invalide credentials or email not verified",
+                examples={
+                    "application/json": {
+                        "message": "Email not verified. Please verify your email.",
+                        "status": "error",
+                        "data": None
+                    }
+                }
+            ),
+            status.HTTP_400_BAD_REQUEST: openapi.Response(
+                description="Validation errors",
+                examples={
+                    "application/json": {
+                        "email": ["This field is required"],
+                        "password": ["This fields is required"]
+                    }
+                }
+            )
+        }
+    )
+    def post(self, request):
+        try:
+            serializer = LoginSerializer(
+                data=request.data,
+                context={'request': request}
+            )
+
+            serializer.is_valid(raise_exception=True)
+
+            user = serializer.validated_data['user']
+            if not user.is_active:
+                return Response({
+                    'message': 'Email not verified.Please verify your email.',
+                    'status': 'error',
+                    'data': None
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            tokens = self.get_tokens_for_user(user)
+
+            return Response({
+                'message': 'Login successful',
+                'status': 'success',
+                'data': tokens
+
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            print("LOGIN ERROR:", str(e))
+            print("TRACEBACK",traceback.format_exc())
+            return Response({
+                'message': f'Login processing failed',
+                'status': 'error',
+                'data': str(e) or repr(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def get_tokens_for_user(self, user):
+        refresh = RefreshToken.for_user(user)
+        return {
+            'refresh': str(refresh),
+            'access': str(refresh.access_token),
+        }
+
+
+class LogoutView(APIView):
+    permission_classes = []
+
+    @swagger_auto_schema(
+        tags=["Authentication"],
+        operation_summary='logs out a user',
+        operation_description="Logs out the user by blacklisting the provided refresh token.",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=["refresh_token"],
+            properties={
+                "refresh_token": openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="The refresh token issued at login."
+                ),
+            },
+            example={
+                "refresh_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1..."
+            }
+        ),
+        responses={
+            status.HTTP_200_OK: openapi.Response(
+                description="Logout successfully",
+                examples={
+                    "application/json": {
+                        "message": "logout successfully",
+                        "status": "success",
+                        "data": None
+                    }
+                }
+            ),
+            status.HTTP_400_BAD_REQUEST: openapi.Response(
+                description="Invalid or missing refresh tokens",
+                examples={
+                    "application/json": {
+                        "message": "Invalid or expired refresh token",
+                        "status": "error",
+                        "data": None
+                    }
+                }
+            )
+        }
+    )
+    def post(self, request):
+        try:
+            refresh_token = request.data.get('refresh_token')
+            if not refresh_token:
+                return Response({
+                    "message": "Refrersh token is required",
+                    "status": "error",
+                    "data": None
+                }, status=status.HTTP_400_BAD_REQUEST)
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+
+            return Response({
+                "message": "Logout successful",
+                "status": "success",
+                "data": None
+            }, status=status.HTTP_200_OK)
+        except TokenError:
+            return Response({
+                "message": "Invalid or expired refresh token",
+                "status": "error",
+                "data": None
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({
+                "message": f"Logout failed: {str(e)}",
+                "status": "error",
+                "data": None
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+
+from django.core.signing import TimestampSigner, BadSignature
+import uuid
+
+
+def generate_verification_token_for_password_reset(user):
+    signer = TimestampSigner()
+    token = signer.sign(f"{user.id}:{uuid.uuid4().hex}")
+    print(f"Genereated token:{token}")
+    return token
+
+
+class ChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = ChangePasswordSerializer
+
+    @swagger_auto_schema(
+        tags=["Authentication"],
+        operation_summary="change password",
+        operation_description="""
+        Change the password of the currently logged-in user.  
+        - Requires **Bearer token authentication**.  
+        - New password must meet strength requirements:
+            * At least 8 characters  
+            * At least one uppercase letter  
+            * At least one lowercase letter  
+            * At least one number  
+            * At least one special character
+        """,
+        request_body=ChangePasswordSerializer,
+        responses={
+            status.HTTP_200_OK: openapi.Response(
+                description="Password change request created successfully. Email verification required.",
+                examples={
+                    "application/json": {
+                        "message": "Please check your email to verify this request",
+                        "status": "pending",
+                        "data": None,
+                    }
+                }
+            ),
+            status.HTTP_400_BAD_REQUEST: openapi.Response(
+                description="Validation error",
+                examples={
+                    "application/json": {
+                        "old_password": "Current password is incorrect",
+                        "new_password": "New password must be at least 8 characters long"
+                    }
+                }
+            ),
+            status.HTTP_401_UNAUTHORIZED: openapi.Response(
+                description="Authentication required",
+                examples={
+                    "application/json": {
+                        "detail": "Authentication credentials were not provided."
+                    }
+                }
+            ),
+            status.HTTP_500_INTERNAL_SERVER_ERROR: openapi.Response(
+                description="Unexpected server error",
+                examples={
+                    "application/json": {
+                        "message": "Unexpected error occured",
+                        "status": "failed",
+                        "data": None,
+                        "detail": "Detailed error message"
+                    }
+                }
+            )
+        }
+    )
+    def post(self, request):
+        try:
+            user = request.user
+            token = generate_verification_token_for_password_reset(user)
+            change_request = PasswordResetRequest.objects.create(
+                user=user,
+                token=token,
+                old_password=request.data.get('old_password'),
+                new_password=request.data.get('new_password'),
+                expires_at=timezone.now() + timedelta(hours=1)
+            )
+            print(f"Created PasswordChangeRequest:{change_request}")
+            send_password_change_email(user, token)
+            return Response({
+                'message': 'Please check your email to verify this request',
+                'status': 'Pending',
+                'data': None
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({
+                'message': 'Unexpected erro occured',
+                'status': 'failed',
+                'data': None,
+                'detail': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+import json
+
+
+class UserDataView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get_object(self):
-        return self.request.user
+    @swagger_auto_schema(
+        tags=["Authentication"],
+        operation_summary="view own profile",
+        operation_description="Retrieve the authenticated user's profile data.",
+        responses={
+            200: openapi.Response(
+                description="User data retrieved successfully",
+                examples={
+                    "application/json": {
+                        "message": "User data retrieved succefully",
+                        "status": "success",
+                        "data": {
+                            "id": 1,
+                            "username": "johndoe",
+                            "email": "johndoe@gmail.com",
+                            "first_name": "John",
+                            "last_name": "Doe",
+                            "course": "Computer Science",
+                            "registration_no": "CS12345",
+                            "bio": "Passionate developer.",
+                            "tech_stacks": ["Python", "Django", "React"],
+                            "social_media": {"github": "https://github.com/johndoe"},
+                            "photo": "http://localhost:8000/media/photos/johndoe.jpg",
+                            "graduation_year": 2025,
+                            "projects": ["InsuraChain", "DebtTracker"],
+                            "skills": ["Backend Development", "API Design"]
+                        }
+                    }
+                }
+            ),
+            404: openapi.Response(
+                description="User profile not found",
+                examples={
+                    "application/json": {"error": "User profile does not exist"}
+                }
+            ),
+        }
+    )
+    def get(self, request):
+        user = request.user
+        serializer = UserSerializer(user, context={'request':request})
+
+        return Response({
+            'message':'User data retrieved successfully',
+            'status':'success',
+            'data':serializer.data
+        },status=status.HTTP_200_OK)
+
+
+class UserProfileUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        tags=["Authentication"],
+        operation_summary="update personal profile",
+        operation_description="Update the authenticated user's profile information. Accepts JSON or multipart/form-data when uploading photo.",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'first_name': openapi.Schema(type=openapi.TYPE_STRING, description="First name of the user"),
+                'last_name': openapi.Schema(type=openapi.TYPE_STRING, description="Last name of the user"),
+                'email': openapi.Schema(type=openapi.TYPE_STRING, format="email", description="Email address"),
+                'course': openapi.Schema(type=openapi.TYPE_STRING, description="Course of study"),
+                'registration_no': openapi.Schema(type=openapi.TYPE_STRING, description="Student registration number"),
+                'bio': openapi.Schema(type=openapi.TYPE_STRING, description="Short biography"),
+                'tech_stacks': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Items(type=openapi.TYPE_STRING),
+                                              description="List of technologies"),
+                'social_media': openapi.Schema(type=openapi.TYPE_OBJECT,
+                                               additional_properties=openapi.Items(type=openapi.TYPE_STRING),
+                                               description="Social media links"),
+                'photo': openapi.Schema(type=openapi.TYPE_STRING, format='binary', description="Profile photo upload"),
+                'year_of_study': openapi.Schema(type=openapi.TYPE_INTEGER, description="Current year of study"),
+                'graduation_year': openapi.Schema(type=openapi.TYPE_INTEGER, description="Expected graduation year"),
+                'projects': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Items(type=openapi.TYPE_STRING),
+                                           description="List of projects"),
+                'skills': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Items(type=openapi.TYPE_STRING),
+                                         description="List of skills"),
+            }
+        ),
+        responses={
+            200: openapi.Response(
+                description="Profile updated successfully.",
+                examples={
+                    "application/json": {
+                        "message": "User profile updated successfully",
+                        "status": "success",
+                        "data": {
+                            "id": 1,
+                            "username": "johndoe",
+                            "email": "johndoe@example.com",
+                            "first_name": "John",
+                            "last_name": "Doe",
+                            "course": "Computer Science",
+                            "registration_no": "CS2023/1234",
+                            "bio": "Updated bio here.",
+                            "tech_stacks": ["Python", "Django", "React", "Docker"],
+                            "social_media": {"github": "https://github.com/johndoe"},
+                            "photo": "http://localhost:8000/media/photos/johndoe_new.jpg",
+                            "year_of_study": 4,
+                            "graduation_year": 2025,
+                            "projects": ["AI Chatbot", "New Blockchain App"],
+                            "skills": ["Backend", "DevOps"]
+                        }
+                    }
+                }
+            ),
+            404: openapi.Response(
+                description="Profile not found.",
+                examples={
+                    "application/json": {"error": "User profile does not exist"}
+                }
+            ),
+        }
+    )
+    def put(self, request):
+        user = request.user
+        try:
+            user_profile = UserProfile.objects.get(user=user)
+
+            # Update User fields
+            user_fields = ['first_name', 'last_name', 'email']
+            for field in user_fields:
+                if field in request.data:
+                    setattr(user, field, request.data[field])
+            user.save()
+
+            # Update UserProfile fields
+            profile_fields = ['phone_number', 'national_id', 'date_of_birth', 'gender']
+            for field in profile_fields:
+                if field in request.data:
+                    setattr(user_profile, field, request.data[field])
+
+            # Handle profile image upload
+            if 'profile_image' in request.FILES:
+                user_profile.profile_image = request.FILES['profile_image']
+
+            user_profile.save()
+
+            # Handle address updates
+            if 'addresses' in request.data:
+                addresses_data = request.data['addresses']
+
+                # If addresses_data is a list, handle multiple addresses
+                if isinstance(addresses_data, list):
+                    # Option 1: Replace all existing addresses
+                    # Address.objects.filter(user=user).delete()  # Uncomment to replace all
+
+                    for address_data in addresses_data:
+                        address_id = address_data.get('id')
+
+                        if address_id:
+                            # Update existing address
+                            try:
+                                address = Address.objects.get(id=address_id, user=user)
+                                address_fields = ['county', 'country', 'town', 'address_type',
+                                                  'constituency', 'landmark', 'postal_code', 'street']
+                                for field in address_fields:
+                                    if field in address_data:
+                                        setattr(address, field, address_data[field])
+                                address.save()
+                            except Address.DoesNotExist:
+                                continue
+                        else:
+                            # Create new address
+                            Address.objects.create(
+                                user=user,
+                                county=address_data.get('county', ''),
+                                country=address_data.get('country', ''),
+                                town=address_data.get('town', ''),
+                                address_type=address_data.get('address_type', ''),
+                                constituency=address_data.get('constituency', ''),
+                                landmark=address_data.get('landmark', ''),
+                                postal_code=address_data.get('postal_code', ''),
+                                street=address_data.get('street', '')
+                            )
+
+                # If it's a single address object
+                elif isinstance(addresses_data, dict):
+                    address_id = addresses_data.get('id')
+
+                    if address_id:
+                        # Update existing address
+                        try:
+                            address = Address.objects.get(id=address_id, user=user)
+                            address_fields = ['county', 'country', 'town', 'address_type',
+                                              'constituency', 'landmark', 'postal_code', 'street']
+                            for field in address_fields:
+                                if field in addresses_data:
+                                    setattr(address, field, addresses_data[field])
+                            address.save()
+                        except Address.DoesNotExist:
+                            pass
+                    else:
+                        # Create new address
+                        Address.objects.create(
+                            user=user,
+                            county=addresses_data.get('county', ''),
+                            country=addresses_data.get('country', ''),
+                            town=addresses_data.get('town', ''),
+                            address_type=addresses_data.get('address_type', ''),
+                            constituency=addresses_data.get('constituency', ''),
+                            landmark=addresses_data.get('landmark', ''),
+                            postal_code=addresses_data.get('postal_code', ''),
+                            street=addresses_data.get('street', '')
+                        )
+
+            # Get updated addresses
+            user_addresses = Address.objects.filter(user=user)
+            addresses_data = []
+            for address in user_addresses:
+                address_dict = {
+                    'id': address.id,
+                    'county': address.county,
+                    'country': address.country,
+                    'town': address.town,
+                    'address_type': address.address_type,
+                    'constituency': address.constituency,
+                    'landmark': address.landmark,
+                    'postal_code': address.postal_code,
+                    'street': address.street
+                }
+                addresses_data.append(address_dict)
+
+            # Build response data
+            updated_data = {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+                'phone_number': user_profile.phone_number,
+                'national_id': user_profile.national_id,
+                'date_of_birth': user_profile.date_of_birth,
+                'gender': user_profile.gender,
+                'profile_image': request.build_absolute_uri(
+                    user_profile.profile_image.url) if user_profile.profile_image else None,
+                'user_addresses': addresses_data
+            }
+
+            return Response({
+                "message": "User profile updated successfully",
+                "status": "success",
+                "data": updated_data
+            }, status=status.HTTP_200_OK)
+
+        except UserProfile.DoesNotExist:
+            return Response({
+                "error": "User profile does not exist"
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                "error": f"An error occurred: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @swagger_auto_schema(
+        operation_description="Partially update the authenticated user's profile (same fields as PUT, but not all required).",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            additional_properties=openapi.Items(type=openapi.TYPE_STRING),
+            description="Any subset of profile fields to update"
+        ),
+        responses={200: "Partial update successful"}
+    )
+    def patch(self, request):
+        return self.put(request)
+
+
+class UsersPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+
+class AllUsersView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        tags=["Authentication"],
+        operation_summary="Retrieves users profiles",
+        operation_description="Retrieve all users with there basic profile details (paginated).",
+        responses={
+            200: openapi.Response(
+                description="List of all users retrieved successfully",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "message": openapi.Schema(type=openapi.TYPE_STRING, example="All users retrieved successfully"),
+                        "status": openapi.Schema(type=openapi.TYPE_STRING, example="success"),
+                        "data": openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            properties={
+                                "count": openapi.Schema(type=openapi.TYPE_INTEGER, example=25),
+                                "next": openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_URI,
+                                                       example="http://api.example.com/users/?page=2"),
+                                "previous": openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_URI,
+                                                           example=None),
+                                "result": openapi.Schema(
+                                    type=openapi.TYPE_ARRAY,
+                                    items=openapi.Schema(
+                                        type=openapi.TYPE_OBJECT,
+                                        properties={
+                                            "id": openapi.Schema(type=openapi.TYPE_INTEGER, example=1),
+                                            "username": openapi.Schema(type=openapi.TYPE_STRING, example="john_doe"),
+                                            "email": openapi.Schema(type=openapi.TYPE_STRING,
+                                                                    example="john@example.com"),
+                                            "first_name": openapi.Schema(type=openapi.TYPE_STRING, example="John"),
+                                            "last_name": openapi.Schema(type=openapi.TYPE_STRING, example="Doe"),
+                                            "course": openapi.Schema(type=openapi.TYPE_STRING,
+                                                                     example="Computer Science"),
+                                            "photo": openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_URI,
+                                                                    example="http://api.example.com/media/photos/john.jpg")
+                                        }
+                                    )
+                                ),
+                            },
+                        ),
+
+                    },
+                ),
+            ),
+            500: openapi.Response(
+                description="Internal Server Error",
+                examples={
+                    "application/json": {"error": "error fetching users: Something went wrong"}
+                }
+            )
+        }
+    )
+    def get(self, request):
+        try:
+            users = User.objects.all().prefetch_related(
+                Prefetch('userprofile', queryset=UserProfile.objects.all(), to_attr='profile')
+            )
+            paginator = UsersPagination()
+            page = paginator.paginate_queryset(users, request)
+            user_data_list = []
+            for user in page:
+                profile = user.profile_cache[0] if hasattr(user, 'profile_cache') and user.profile_cache else None
+                user_data = {
+                    'id': user.id,
+                    'username': user.username,
+                    'email': user.email,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'course': profile.course if profile else None,
+                    'photo': request.build_absolute_uri(profile.photo.url) if profile and profile.photo else None,
+                }
+                user_data_list.append(user_data)
+            return Response({
+                'message': 'All users retrieved successfully',
+                'status': 'success',
+                'data': {
+                    'count': paginator.page.paginator.count,
+                    'next': paginator.get_next_link(),
+                    'previous': paginator.get_previous_link(),
+                    'results': user_data_list
+                }
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({
+                'error': f'error fetching users:{str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def get_all_users(request):
+    users = User.objects.all()
+    serializer = UserSerializer(users, many=True)  # Serialize users
+    return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class RequestPasswordResetView(APIView):
+
+    @swagger_auto_schema(
+        tags=["Authentication"],
+        operation_summary="Request Password Reset",
+        operation_description="Send an OTP to the provided email for password reset.",
+        request_body=RequestPasswordResetSerializer,
+        responses={
+            200: openapi.Response(
+                description="OTP successfully sent",
+                examples={
+                    "application/json": {"message": "OTP has been sent to your email."}
+                }
+            ),
+            400: "Invalid request body (e.g. missing/invalid email)"
+        }
+    )
+    def post(self, request):
+        serializer = RequestPasswordResetSerializer(data=request.data)
+        if serializer.is_valid():
+            email = serializer.validated_data['email']
+            user = User.objects.get(email=email)
+            OTP.objects.filter(user=user, is_verified=False).update(expires_at=timezone.now())
+            otp_code = generate_otp()
+            OTP.objects.create(user=user, otp_code=otp_code)
+            send_otp_email(user, otp_code)
+
+            return Response({"message": "OTP has been sent to your email."}, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ResetPasswordView(APIView):
+
+    @swagger_auto_schema(
+        tags=["Authentication"],
+        operation_summary="Reset Password",
+        operation_description="Reset the password using a verified OTP.",
+        request_body=ResetPasswordSerializer,
+        responses={
+            200: openapi.Response(
+                description="Password reset successful",
+                examples={
+                    "application/json": {"message": "Password reset successfully."}
+                }
+            ),
+            400: openapi.Response(
+                description="No valid OTP or invalid data",
+                examples={
+                    "application/json": {"message": "No valid verified OTP found"}
+                }
+            )
+        }
+    )
+    def post(self, request):
+        serializer = ResetPasswordSerializer(data=request.data)
+        if serializer.is_valid():
+            email = serializer.validated_data['email']
+            new_password = serializer.validated_data['new_password']
+
+            user = User.objects.get(email=email)
+            otp = OTP.objects.filter(
+                user=user,
+                is_verified=True
+            ).order_by('-created_at').first()
+
+            if otp and otp.is_valid():
+                user.set_password(new_password)
+                user.save()
+                otp.delete()
+                return Response({"message": "Password reset successfully."}, status=status.HTTP_200_OK)
+            return Response({"message": "No valid verified OTP found"}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class DeleteAccountView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        tags=["Authentication"],
+        operation_summary="Delete User Account",
+        operation_description="Delete the authenticated user's account.",
+        responses={
+            204: openapi.Response(
+                description="Account deleted successfully"
+            ),
+            401: "Unauthorized - Authentication required"
+        }
+    )
+    def delete(self, request, *args, **kwargs):
+        user = request.user
+        user.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 class AddressListCreateView(generics.ListCreateAPIView):
     serializer_class = AddressSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated]
+
 
     def get_queryset(self):
-        return Address.objects.filter(user=self.request.user)
+        return Address.objects.filter(user=self.request.user).order_by('-created_at')
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
 
 class AddressDetailView(generics.RetrieveUpdateDestroyAPIView):
+    def get_queryset(self):
+        return Address.objects.filter(user=self.request.user)
+
+    def get_object(self):
+        queryset = self.get_queryset()
+        address_id = self.kwargs.get('pk')
+        obj = get_object_or_404(queryset, id=address_id)
+        return obj
+
+
+class AddressDeleteView(generics.DestroyAPIView):
     serializer_class = AddressSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         return Address.objects.filter(user=self.request.user)
 
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        address_info = {
+            'id': instance.id,
+            'street': instance.street,
+            'town': instance.town,
+            'address_type': instance.address_type
+        }
 
+        self.perform_destroy(instance)
+
+        return Response({
+            'message': 'Address deleted successfully',
+            'status': 'success',
+            'deleted_address': address_info
+        }, status=status.HTTP_200_OK)

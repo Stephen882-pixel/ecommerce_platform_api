@@ -12,8 +12,12 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 from email.policy import default
 from pathlib import Path
 import os
-from decouple import config
+from decouple import Config
 from datetime import timedelta
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from django.conf.global_settings import INSTALLED_APPS
 
@@ -25,10 +29,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = config('SECRET_KEY')
+SECRET_KEY = Config('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config('DEBUG', default=False,cast=bool)
+DEBUG = Config('DEBUG')
 
 ALLOWED_HOSTS = ['localhost','127.0.0.1','0.0.0.0']
 
@@ -47,13 +51,17 @@ DJANGO_APPS = [
 THIRD_PARTY_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
+    'rest_framework.authtoken',
+    'rest_framework_simplejwt.token_blacklist',
+    'dj_rest_auth',
     'corsheaders',
-    'djoser',
-    'drf_spectacular',
+    # 'users.apps.UsersConfig',
+    'drf_yasg',
 ]
 
 LOCAL_APPS = [
-    'users',
+    # 'users',
+    'users.apps.UsersConfig',
     'products',
     'orders',
     'payments'
@@ -152,7 +160,7 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-#STATICFILES_DIRS = [BASE_DIR / 'static']
+STATICFILES_DIRS = [BASE_DIR / 'static']
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
@@ -167,9 +175,9 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
-    'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
-    ],
+    # 'DEFAULT_PERMISSION_CLASSES': [
+    #     'rest_framework.permissions.IsAuthenticated',
+    # ],
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
     ],
@@ -178,51 +186,33 @@ REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
-# JWT Settings
+# JWT Configuration
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=config('JWT_ACCESS_TOKEN_LIFETIME', default=60, cast=int)),
-    'REFRESH_TOKEN_LIFETIME': timedelta(minutes=config('JWT_REFRESH_TOKEN_LIFETIME', default=1440, cast=int)),
-    'ROTATE_REFRESH_TOKENS': True,
+    'ACCESS_TOKEN_LIFETIME': timedelta(seconds=int(os.environ.get('JWT_ACCESS_TOKEN_LIFETIME', 604800))),  # Default 7 days
+    'REFRESH_TOKEN_LIFETIME': timedelta(minutes=int(os.environ.get('JWT_REFRESH_TOKEN_LIFETIME', 14400))),  # Default 10 days
+    'ROTATE_REFRESH_TOKENS': False,
     'BLACKLIST_AFTER_ROTATION': True,
-    'UPDATE_LAST_LOGIN': True,
-    'ALGORITHM': config('JWT_ALGORITHM', default='HS256'),
-    'SIGNING_KEY': config('JWT_SECRET_KEY', default=SECRET_KEY),
-    'VERIFYING_KEY': None,
-    'AUDIENCE': None,
-    'ISSUER': None,
     'AUTH_HEADER_TYPES': ('Bearer',),
-    'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
-    'USER_ID_FIELD': 'id',
-    'USER_ID_CLAIM': 'user_id',
+    "SIGNING_KEY": os.environ.get('JWT_SECRET_KEY', str(SECRET_KEY)),
 }
 
-# Djoser Settings
-DJOSER = {
-    'LOGIN_FIELD': 'email',
-    'USER_CREATE_PASSWORD_RETYPE': True,
-    'USERNAME_CHANGED_EMAIL_CONFIRMATION': True,
-    'PASSWORD_CHANGED_EMAIL_CONFIRMATION': True,
-    'SEND_CONFIRMATION_EMAIL': True,
-    'SET_USERNAME_RETYPE': True,
-    'PASSWORD_RESET_CONFIRM_URL': 'auth/password-reset/{uid}/{token}',
-    'USERNAME_RESET_CONFIRM_URL': 'auth/username-reset/{uid}/{token}',
-    'ACTIVATION_URL': 'auth/activate/{uid}/{token}',
-    'SEND_ACTIVATION_EMAIL': True,
-    'SERIALIZERS': {
-        'user_create': 'users.serializers.UserCreateSerializer',
-        'user': 'users.serializers.UserSerializer',
-        'user_delete': 'djoser.serializers.UserDeleteSerializer',
-    },
-}
+# JWT and Authentication Settings
+ACCOUNT_EMAIL_VERIFICATION = "none"
+LOGIN_REDIRECT_URL = "/"
+LOGOUT_REDIRECT_URL = "/"
+JWT_SECRET = os.environ.get('JWT_SECRET')
+JWT_ALGORITHM = "HS256"
+
+
 
 # Email Configuration
-EMAIL_BACKEND = config('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
-EMAIL_HOST = config('EMAIL_HOST', default='localhost')
-EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
-EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
-EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
-EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
-DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@ecommerce.com')
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER)
 
 # CORS Settings
 CORS_ALLOWED_ORIGINS = [
@@ -232,16 +222,10 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:8080",
 ]
 
-CORS_ALLOW_CREDENTIALS = True
+# CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_ALL_ORIGINS = os.environ.get('CORS_ALLOW_ALL_ORIGINS', 'True').lower() == 'true'
+CORS_ALLOWED_ORIGINS = os.environ.get('CORS_ALLOWED_ORIGINS', '').split(',') if not CORS_ALLOW_ALL_ORIGINS else []
 
-# API Documentation
-SPECTACULAR_SETTINGS = {
-    'TITLE': 'E-Commerce API',
-    'DESCRIPTION': 'A comprehensive e-commerce REST API built with Django REST Framework',
-    'VERSION': '1.0.0',
-    'SERVE_INCLUDE_SCHEMA': False,
-    'SCHEMA_PATH_PREFIX': '/api/v1/',
-}
 
-AUTH_USER_MODEL = 'users.User'
+# AUTH_USER_MODEL = 'users.User'
 
